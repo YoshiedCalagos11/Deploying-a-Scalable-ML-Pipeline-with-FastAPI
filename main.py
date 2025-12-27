@@ -1,63 +1,50 @@
-
+import pickle
 import pandas as pd
+from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
-from ml.data import apply_label, process_data
-from ml.model import inference, load_model  # noqa: F401
-
-# DO NOT MODIFY
+from ml.data import process_data
+from ml.model import inference
 
 
-class Data(BaseModel):
-    age: int = Field(..., example=37)
-    workclass: str = Field(..., example="Private")
-    fnlgt: int = Field(..., example=178356)
-    education: str = Field(..., example="HS-grad")
-    education_num: int = Field(..., example=10, alias="education-num")
-    marital_status: str = Field(
-        ..., example="Married-civ-spouse", alias="marital-status"
-    )
-    occupation: str = Field(..., example="Prof-specialty")
-    relationship: str = Field(..., example="Husband")
+app = FastAPI()
+
+
+class CensusData(BaseModel):
+    age: int = Field(..., example=39)
+    workclass: str = Field(..., example="State-gov")
+    fnlgt: int = Field(..., example=77516)
+    education: str = Field(..., example="Bachelors")
+    education_num: int = Field(..., alias="education-num", example=13)
+    marital_status: str = Field(..., alias="marital-status", example="Never-married")
+    occupation: str = Field(..., example="Adm-clerical")
+    relationship: str = Field(..., example="Not-in-family")
     race: str = Field(..., example="White")
     sex: str = Field(..., example="Male")
-    capital_gain: int = Field(..., example=0, alias="capital-gain")
-    capital_loss: int = Field(..., example=0, alias="capital-loss")
-    hours_per_week: int = Field(..., example=40, alias="hours-per-week")
-    native_country: str = Field(..., example="United-States", alias="native-country")
+    capital_gain: int = Field(..., alias="capital-gain", example=2174)
+    capital_loss: int = Field(..., alias="capital-loss", example=0)
+    hours_per_week: int = Field(..., alias="hours-per-week", example=40)
+    native_country: str = Field(..., alias="native-country", example="United-States")
+
+    class Config:
+        populate_by_name = True
 
 
-path = None  # TODO: enter the path for the saved encoder
-encoder = load_model(path)
+with open("model/model.pkl", "rb") as f:
+    model = pickle.load(f)
 
-path = None  # TODO: enter the path for the saved model
-model = load_model(path)
-
-# TODO: create a RESTful API using FastAPI
-app = None  # your code here
-
-# TODO: create a GET on the root giving a welcome message
-
+with open("model/encoder.pkl", "rb") as f:
+    encoder = pickle.load(f)
 
 @app.get("/")
-async def get_root():
-    """ Say hello!"""
-    # your code here
-    pass
+async def root():
+    return {"message": "Hello from the API!"}
 
 
-# TODO: create a POST on a different path that does model inference
-@app.post("/data/")
-async def post_inference(data: Data):
-    # DO NOT MODIFY: turn the Pydantic model into a dict.
-    data_dict = data.dict()
-    # DO NOT MODIFY: clean up the dict to turn it into a Pandas DataFrame.
-    # The data has names with hyphens and Python does not allow those as variable names.
-    # Here it uses the functionality of FastAPI/Pydantic/etc to deal with this.
-    data = {k.replace("_", "-"): [v] for k, v in data_dict.items()}
-    data = pd.DataFrame.from_dict(data)
-
-    cat_features = [  # noqa: F841
+@app.post("/predict")
+async def predict(data: CensusData):
+    df = pd.DataFrame([data.model_dump(by_alias=True)])
+    cat_features = [
         "workclass",
         "education",
         "marital-status",
@@ -67,11 +54,17 @@ async def post_inference(data: Data):
         "sex",
         "native-country",
     ]
-    data_processed, _, _, _ = process_data(
-        # your code here
-        # use data as data input
-        # use training = False
-        # do not need to pass lb as input
+
+    X, _, _, _ = process_data(
+        df,
+        categorical_features=cat_features,
+        label=None,
+        training=False,
+        encoder=encoder,
     )
-    _inference = None  # your code here to predict the result using data_processed
-    return {"result": apply_label(_inference)}
+
+    preds = inference(model, X)
+    pred_value = int(preds[0])
+
+    label = ">50K" if pred_value == 1 else "<=50K"
+    return {"result": label}
